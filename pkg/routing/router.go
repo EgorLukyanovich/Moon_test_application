@@ -1,37 +1,53 @@
 package routing
 
-// import (
-// 	"log"
-// 	"net/http"
+import (
+	"log"
+	"net/http"
 
-// 	"github.com/egor_lukyanovich/moon_test_application/pkg/app"
-// 	"github.com/go-chi/chi/middleware"
-// 	"github.com/go-chi/chi/v5"
-// 	"github.com/go-chi/cors"
-// )
+	// Укажи свой путь до пакета app
 
-// func NewRouter(storage app.Storage) *chi.Mux {
-// 	r := chi.NewRouter()
+	"github.com/egor_lukyanovich/moon_test_application/pkg/app"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+)
 
-// 	corsHandler := cors.New(cors.Options{
-// 		AllowedOrigins:   []string{"http://localhost:3001", "http://localhost:3000"}, //ЕСЛИ ЧТО ПОРТ ФРОНТА ПЕРВЫЙ
-// 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-// 		AllowedHeaders:   []string{"Accept", "Content-Type", "token", "Authorization"},
-// 		ExposedHeaders:   []string{"Link"},
-// 		AllowCredentials: true,
-// 		MaxAge:           300,
-// 	})
+func NewRouter(storage *app.Storage) *chi.Mux {
+	r := chi.NewRouter()
 
-// 	r.Use(corsHandler.Handler)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
-// 	r.Use(middleware.Logger)
-// 	r.Use(middleware.Recoverer)
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("OK")); err != nil {
+			log.Println("write response failed:", err)
+		}
+	})
 
-// 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-// 		if _, err := w.Write([]byte("OK")); err != nil {
-// 			log.Println("write response failed:", err)
-// 		}
-// 	})
+	r.Route("/api/v1", func(r chi.Router) {
 
-// 	return r
-// }
+		r.Group(func(r chi.Router) {
+			r.Post("/register", handleRegister(storage))
+			r.Post("/login", handleLogin(storage))
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware)
+
+			//			r.Post("/teams", handleCreateTeam(storage))
+			//			r.Get("/teams", handleListTeams(storage))
+			//			r.Post("/teams/{id}/invite", handleInviteToTeam(storage))
+
+			//			r.Post("/tasks", handleCreateTask(storage))
+			//			r.Get("/tasks", handleListTasks(storage))
+			//			r.Put("/tasks/{id}", handleUpdateTask(storage))
+			//			r.Get("/tasks/{id}/history", handleTaskHistory(storage))
+
+			//			r.Get("/stats/teams", handleTeamStats(storage))
+			//			r.Get("/stats/top-users", handleTopUsers(storage))
+			//			r.Get("/stats/invalid-tasks", handleInvalidTasks(storage))
+		})
+	})
+
+	return r
+}

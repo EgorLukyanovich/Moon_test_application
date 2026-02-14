@@ -1,0 +1,369 @@
+openapi: 3.0.3
+info:
+  title: Test task API
+  version: "1.0.0"
+
+tags:
+  - name: Auth
+    description: Регистрация и аутентификация
+  - name: Teams
+    description: Управление командами
+  - name: Tasks
+    description: Управление задачами
+  - name: Stats
+    description: Сложная аналитика
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TeamIdQuery:
+      name: team_id
+      in: query
+      required: true
+      schema:
+        type: integer
+      description: ID команды для фильтрации задач
+    StatusQuery:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Фильтр по статусу задачи (например, todo, in_progress, done)
+    AssigneeIdQuery:
+      name: assignee_id
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: Фильтр по ID исполнителя
+    PageQuery:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 1
+      description: Номер страницы для пагинации
+    TeamIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: ID команды
+    TaskIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: ID задачи
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, text]
+          properties:
+            code:
+              type: string
+            text:
+              type: string
+      example:
+        error:
+          code: UNAUTHORIZED
+          text: invalid or expired token
+
+    AuthRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        created_by:
+          type: integer
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        team_id:
+          type: integer
+        assignee_id:
+          type: integer
+          nullable: true
+        created_by:
+          type: integer
+
+    TaskHistory:
+      type: object
+      properties:
+        id:
+          type: integer
+        task_id:
+          type: integer
+        changed_by:
+          type: integer
+        change_type:
+          type: string
+        old_value:
+          type: string
+          nullable: true
+        new_value:
+          type: string
+          nullable: true
+
+paths:
+  /api/v1/register:
+    post:
+      tags: [Auth]
+      summary: Регистрация нового пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '201':
+          description: Пользователь успешно зарегистрирован
+          content:
+            application/json:
+              example:
+                id: 1
+                message: user registered successfully
+        '409':
+          description: Email уже занят
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/login:
+    post:
+      tags: [Auth]
+      summary: Аутентификация (Получение JWT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '200':
+          description: Успешный вход
+          content:
+            application/json:
+              example:
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '401':
+          description: Неверный email или пароль
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/teams:
+    post:
+      tags: [Teams]
+      security:
+        - bearerAuth: []
+      summary: Создать команду (пользователь становится owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '201':
+          description: Команда создана
+          content:
+            application/json:
+              example:
+                team_id: 5
+    get:
+      tags: [Teams]
+      security:
+        - bearerAuth: []
+      summary: Список команд пользователя
+      responses:
+        '200':
+          description: Массив команд
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Team'
+
+  /api/v1/teams/{id}/invite:
+    post:
+      tags: [Teams]
+      security:
+        - bearerAuth: []
+      summary: Пригласить пользователя в команду (только owner/admin)
+      parameters:
+        - $ref: '#/components/parameters/TeamIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: { type: integer }
+                role: { type: string, enum: [admin, member] }
+      responses:
+        '200':
+          description: Пользователь добавлен
+        '403':
+          description: Нет прав
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/tasks:
+    post:
+      tags: [Tasks]
+      security:
+        - bearerAuth: []
+      summary: Создать задачу
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, status, team_id]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                status: { type: string }
+                team_id: { type: integer }
+      responses:
+        '201':
+          description: Задача создана
+          content:
+            application/json:
+              example:
+                task_id: 10
+    get:
+      tags: [Tasks]
+      security:
+        - bearerAuth: []
+      summary: Получить список задач с фильтрацией (Redis Cache)
+      parameters:
+        - $ref: '#/components/parameters/TeamIdQuery'
+        - $ref: '#/components/parameters/StatusQuery'
+        - $ref: '#/components/parameters/AssigneeIdQuery'
+        - $ref: '#/components/parameters/PageQuery'
+      responses:
+        '200':
+          description: Список задач
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+
+  /api/v1/tasks/{id}:
+    put:
+      tags: [Tasks]
+      security:
+        - bearerAuth: []
+      summary: Обновить задачу
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                status: { type: string }
+                assignee_id: { type: integer, nullable: true }
+      responses:
+        '200':
+          description: Успешно обновлено
+
+  /api/v1/tasks/{id}/history:
+    get:
+      tags: [Tasks]
+      security:
+        - bearerAuth: []
+      summary: История изменений задачи
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '200':
+          description: Список изменений
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskHistory'
+
+  /api/v1/stats/teams:
+    get:
+      tags: [Stats]
+      security:
+        - bearerAuth: []
+      summary: Статистика команд (агрегация)
+      responses:
+        '200':
+          description: Успешно
+
+  /api/v1/stats/top-users:
+    get:
+      tags: [Stats]
+      security:
+        - bearerAuth: []
+      summary: Топ-3 пользователя (оконная функция)
+      responses:
+        '200':
+          description: Успешно
+
+  /api/v1/stats/invalid-tasks:
+    get:
+      tags: [Stats]
+      security:
+        - bearerAuth: []
+      summary: Поиск проблемных данных (assignee не в команде)
+      responses:
+        '200':
+          description: Успешно

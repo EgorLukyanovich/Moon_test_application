@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/egor_lukyanovich/moon_test_application/internal/db"
-	"github.com/egor_lukyanovich/moon_test_application/pkg/app"
 	json_resp "github.com/egor_lukyanovich/moon_test_application/pkg/json"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -31,6 +30,34 @@ func getJWTKey() []byte {
 		return []byte("test_secret_key_123")
 	}
 	return []byte(secret)
+}
+
+func GetUserIDHelper(ctx context.Context) (int64, bool) {
+	id, ok := ctx.Value(userIDKey).(int64)
+	return id, ok
+}
+
+func CheckTeamRole(ctx context.Context, q *db.Queries, teamID, userID int64, allowedRoles ...string) bool {
+	role, err := q.GetUserRoleInTeam(ctx, db.GetUserRoleInTeamParams{
+		TeamID: teamID,
+		UserID: userID,
+	})
+	if err != nil {
+		return false
+	}
+
+	if len(allowedRoles) == 0 {
+		return true
+	}
+
+	userRoleStr := string(role)
+	for _, allowed := range allowedRoles {
+		if userRoleStr == allowed {
+			return true
+		}
+	}
+
+	return false
 }
 
 func AuthMiddleware(next http.Handler) http.Handler {
@@ -78,77 +105,76 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func handleRegister(storage *app.Storage) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req authRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			json_resp.RespondError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json body")
-			return
-		}
-
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			json_resp.RespondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to hash password")
-			return
-		}
-
-		res, err := storage.Queries.CreateUser(r.Context(), db.CreateUserParams{
-			Email:        req.Email,
-			PasswordHash: string(hashedPassword),
-		})
-		if err != nil {
-			json_resp.RespondError(w, http.StatusConflict, "CONFLICT", "user with this email already exists")
-			return
-		}
-
-		userID, _ := res.LastInsertId()
-
-		json_resp.RespondJSON(w, http.StatusCreated, map[string]interface{}{
-			"id":      userID,
-			"message": "user registered successfully",
-		})
-	}
+type AuthHandlers struct {
+	q *db.Queries
 }
 
-func handleLogin(storage *app.Storage) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req authRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			json_resp.RespondError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json body")
-			return
-		}
-
-		user, err := storage.Queries.GetUserByEmail(r.Context(), req.Email)
-		if err != nil {
-			json_resp.RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
-			return
-		}
-
-		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
-		if err != nil {
-			json_resp.RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
-			return
-		}
-
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"sub": user.ID,
-			"exp": time.Now().Add(72 * time.Hour).Unix(),
-			"iat": time.Now().Unix(),
-		})
-
-		tokenString, err := token.SignedString(getJWTKey())
-		if err != nil {
-			json_resp.RespondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate token")
-			return
-		}
-
-		json_resp.RespondJSON(w, http.StatusOK, map[string]string{
-			"token": tokenString,
-		})
-	}
+func NewAuthHandlers(q *db.Queries) *AuthHandlers {
+	return &AuthHandlers{q: q}
 }
 
-func GetUserIDHelper(ctx context.Context) (int64, bool) {
-	id, ok := ctx.Value(userIDKey).(int64)
-	return id, ok
+func (h *AuthHandlers) Register(w http.ResponseWriter, r *http.Request) {
+	var req authRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json_resp.RespondError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json body")
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		json_resp.RespondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to hash password")
+		return
+	}
+
+	res, err := h.q.CreateUser(r.Context(), db.CreateUserParams{
+		Email:        req.Email,
+		PasswordHash: string(hashedPassword),
+	})
+	if err != nil {
+		json_resp.RespondError(w, http.StatusConflict, "CONFLICT", "user with this email already exists")
+		return
+	}
+
+	userID, _ := res.LastInsertId()
+
+	json_resp.RespondJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":      userID,
+		"message": "user registered successfully",
+	})
+}
+
+func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
+	var req authRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json_resp.RespondError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json body")
+		return
+	}
+
+	user, err := h.q.GetUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		json_resp.RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
+	if err != nil {
+		json_resp.RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
+		return
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": user.ID,
+		"exp": time.Now().Add(72 * time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	tokenString, err := token.SignedString(getJWTKey())
+	if err != nil {
+		json_resp.RespondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate token")
+		return
+	}
+
+	json_resp.RespondJSON(w, http.StatusOK, map[string]string{
+		"token": tokenString,
+	})
 }

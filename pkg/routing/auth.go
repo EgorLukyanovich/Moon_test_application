@@ -37,6 +37,10 @@ func GetUserIDHelper(ctx context.Context) (int64, bool) {
 	return id, ok
 }
 
+func WithUserID(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, userIDKey, id)
+}
+
 func CheckTeamRole(ctx context.Context, q *db.Queries, teamID, userID int64, allowedRoles ...string) bool {
 	role, err := q.GetUserRoleInTeam(ctx, db.GetUserRoleInTeamParams{
 		TeamID: teamID,
@@ -100,7 +104,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userIDKey, int64(userIDFloat))
+		ctx := WithUserID(r.Context(), int64(userIDFloat))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
